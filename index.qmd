@@ -14,11 +14,13 @@ title-block-banner: "#E69F0095"
 title-block-banner-color: "black"
 format:
   html:
-    df-print: kable
-  pdf:
-    # https://quarto.org/docs/reference/formats/pdf.html
-    link-citations: true
+    embed-resources: true
+    theme: litera
+    code-fold: true
 prefer-html: true
+warning: false
+message: false
+
 ---
 
 ## Introduction
@@ -47,7 +49,7 @@ library(spdep)
 library(spatstat)
 ```
 
-```{r}
+```{r,echo=TRUE, results='hide', message=FALSE, warning=FALSE}
 #| label: load-eda
 # Get immigrant population data
 nyc_data <- get_acs(
@@ -532,8 +534,7 @@ nsim <- 999
 # Run 99 Monte Carlo simulations with Ripley's K-function
 try({
   # Perform envelope analysis for immigrants and bus stops
-  simulated_k_bus <- e
-  nvelope(
+  simulated_k_bus <- envelope(
     multitype_ppp,           # Point pattern dataset
     fun = Kcross,            # Cross-type Ripley's K-function
     nsim = nsim,             # Number of simulations
