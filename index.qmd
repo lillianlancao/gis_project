@@ -260,6 +260,7 @@ bus_stops_ppp$intensity <- bus_stops_ppp$intensity * 1e6
 ```
 
 
+
 ```{r}
 library(spatstat.explore)
 library(viridis)
