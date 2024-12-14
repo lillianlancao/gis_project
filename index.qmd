@@ -1,11 +1,14 @@
 ---
-title: "Coup-Proofing via Capital Relocation"
+title: "Assessing Public Service Accessibility in Immigrant-Dense NYC Tracts"
 subtitle: "DSAN 6750 / PPOL 6805: GIS for Spatial Data Science"
 authors:
-  - name: Jeff Jacobs
-    email: jj1088@georgetown.edu
+  - name: Lan Cao
+    email: lc1311@georgetown.edu
     affiliation: Georgetown University
     corresponding: true
+execute:
+  warning: false
+  message: false
 df-print: kable
 bibliography: GIS_Manuscript.bib
 title-block-banner: "#E69F0095"
@@ -21,89 +24,559 @@ prefer-html: true
 
 ## Introduction
 
-Several previous studies have found robust relationships between spatial properties of a country's **capital city** and that country's propensity for **conflict** and **misgovernance**.
+This project examines the spatial relationship between immigrant populations and public services (schools and bus stops) in New York City. Guided by **the hypothesis that "Census tracts with higher immigrant populations have lower accessibility to public services compared to tracts with lower immigrant populations,"** the study uses GIS and spatial data science tools, including Ripley’s K-function and Monte Carlo simulations, to assess patterns of clustering or dispersion. The findings aim to identify accessibility gaps, providing actionable insights for urban planning to improve equity in public service distribution.
 
-Perceptions of this linkage also have an effect on "coup-proofing" decisions made by national governments. A recent BBC interview with Equatorial Guinea's President Teodoro Obiang, for example, highlighted this as a factor behind his decision to relocate the capital city:
-
-> It's the remoteness of Oyala that makes it so appealing to President Obiang. In a rare interview he described how rebels had recently plotted a seaborne assault on his palace in the current capital, Malabo. 'We need a secure place for my government and for future governments. That's why we have created Oyala, to guarantee the government of Equatorial Guinea.' [@sackur_equatorial_2012]
-
-This case is far from exceptional, as an even more recent *Washington Post* article points out with respect to Myanmar's decision to move its capital from Yangon to Naypyidaw:
-
-> Analysts have described the decision as motivated by a desire to secure the military’s seat of power from any threat of protests or invasions. [@berger_myanmars_2021]
-
-Most of these studies, however, are based on observations of **conflict events**. In this study, we study the more fundamental variable of a capital's distance from the **population centroid** of the country.
-
-## Literature Review
-
-@campante_capital_2019 analyzes the relationship between the location of a **capital city** and the degree of conflict and misgovernance in a given country. Their two key findings are that:
-
-> Conflict is more likely to emerge (and dislodge incumbents) closer to the capital
-
-and
-
-> Isolated capitals are associated with misgovernance.
-
-This first finding is illustrated in @fig-conflict-dist
-
-![](images/conflict_dist.svg){#fig-conflict-dist}
 
 ## Methodology
 
-The **population centroids** we use herein might require some explanation, since the term "centroid" can be ambiguous.
+This study used Kernel Density Estimation and Ripley’s K-function with Monte Carlo simulations to analyze clustering and accessibility patterns between immigrant populations, schools, and bus stops in New York City. Results were visualized to identify gaps and validate the hypothesis.
 
-Here, the population centroids are drawn from @hall_population_2019
 
 ## Exploratory Data Analysis (EDA)
 
-Here we plot the base GIS objects we're analyzing: the location of each **capital city** (in purple) and each **population centroid** (in yellow).
+Here we plot the base GIS objects we're analyzing: the location of each **school** (in red), each **bus stop** (in green), and **immigrant population** estimates(in blue polygon)
 
 ```{r}
-#| label: imports
-library(tidyverse) |> suppressPackageStartupMessages()
-library(sf) |> suppressPackageStartupMessages()
-library(mapview) |> suppressPackageStartupMessages()
-library(units) |> suppressPackageStartupMessages()
-cb_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+library(tidycensus)
+library(sf)
+library(dplyr)
+library(tmap)
+library(osmdata)
+library(readr)
+library(leaflet)
+library(spdep)
+library(spatstat)
 ```
 
 ```{r}
 #| label: load-eda
-merged_long_sf <- readRDS("merged_long_sf.rds")
-mapview(merged_long_sf, zcol="name", cex=4, label="geounit")
+# Get immigrant population data
+nyc_data <- get_acs(
+  geography = "tract",
+  variables = c("B05006_001E"),  # Total foreign-born population
+  state = "NY",
+  county = c("New York", "Kings", "Queens", "Bronx", "Richmond"),  
+  year = 2021,
+  survey = "acs5",
+  geometry = TRUE
+)
+
+# Get school data
+
+school_points <- st_read("SchoolPoints_NYC/SchoolPoints_APS_2024_08_28.shp")
+
+# Bus stop shelter data
+
+bus_stops <- read_csv("Bus_Stop_Shelter.csv")
+
+
 ```
 
-We then construct an **area-normalized** measure of capital-centroid distance $\text{dist}^{\textsf{AN}}$, using the formula
-
-$$
-\text{dist}^{\textsf{AN}}_i = \text{dist}_i / \sqrt{\text{area}_i}.
-$$
-
-A plot of this measure by country looks as follows:
+The shaded polygons represent the density of the immigrant population in various areas of NYC. Red dots mark the locations of schools and green dots show bus stop shelters. From the plot we can get a rough idea that the red dots (schools) are distributed throughout the city but appear to be sparser in areas with higher immigrant densities (e.g., parts of the Bronx and Queens). The dark blue polygons (representing higher immigrant populations) appear concentrated in certain neighborhoods, such as parts of Queens, the Bronx, and Northern Manhattan and these areas generally show a dense distribution of bus stops (green dots), indicating that public transportation may be accessible in these regions. Overall, this plot does not provide sufficient clarity to evaluate the accessibility of public services in immigrant-dense communities. Further analysis is needed to gather more evidence and draw meaningful conclusions.
 
 ```{r}
-#| label: plot-area
-merged_area_sf <- readRDS("merged_area_sf.rds")
-mapview(merged_area_sf, zcol="scaled_dist")
+
+nyc_data <- st_as_sf(nyc_data, wkt = "geometry", crs = 4326)
+school_points <- st_as_sf(school_points, coords = c("Longitude", "Latitude"), crs = 4326)
+bus_stops <- st_as_sf(bus_stops, wkt = "the_geom", crs = 4326)
+
+nyc_data <- st_transform(nyc_data, crs = 4326)
+school_points <- st_transform(school_points, crs = 4326)
+bus_stops <- st_transform(bus_stops, crs = 4326)
+
+# Plot immigrant population, schools, and bus stops together
+
+leaflet() %>%
+  addTiles() %>%
+  addPolygons(data = nyc_data,
+              fillColor = ~colorQuantile("Blues", estimate)(estimate),  
+              color = "black",
+              weight = 1,
+              fillOpacity = 0.8,
+              popup = ~paste0("Population: ", estimate)) %>%
+  
+  addCircleMarkers(data = school_points,
+                   lat = ~Latitude,  
+                   lng = ~Longitude,  
+                   color = "red",
+                   radius = 3,
+                   label = ~Name,  
+                   popup = ~paste0("School Name: ", Name)) %>%
+  
+  addCircleMarkers(data = bus_stops,
+                   lat = ~Latitude,  
+                   lng = ~Longitude,  
+                   color = "green",
+                   radius = 3,
+                   label = ~On_Street,  
+                   popup = ~paste0("Bus Stop: ", On_Street))
+
+
 ```
 
-## Hypothesis Testing (Regression)
+
+## Moran's I analysis
+
+First, we want to determine whether there is a global pattern in the spatial distribution of immigrant population density because it provides a foundation to compare public service accessibility in these areas versus other regions.
+
+When processing the data, I found that my data contains disconnected sub-graphs.
 
 ```{r}
-#| label: plot-regression
-merged_sub_sf <- readRDS("merged_sub_sf.rds")
-merged_sub_sf |> head()
+
+empty_geometries <- st_is_empty(nyc_data)
+nyc_data <- nyc_data[!empty_geometries, ]
+
+nyc_data <- st_buffer(nyc_data, dist = 0)
+nb <- poly2nb(nyc_data, queen = TRUE, snap = 0.5)
+
+subgraphs <- n.comp.nb(nb)
+print(subgraphs$nc)
+
+subgraph_groups <- subgraphs$comp.id
+table(subgraph_groups)
+
+# Isolate polygons in smaller sub-graphs
+isolated_group <- which(subgraph_groups != 1)
+isolated_polygons <- nyc_data[isolated_group, ]
+
+plot(st_geometry(nyc_data), border = "grey")  # Plot all polygons
+plot(st_geometry(isolated_polygons), col = "red", add = TRUE)  # Highlight isolated polygons
+
+
+```
+
+Based on the visualization, the disconnected sub-graphs represent isolated clusters of polygons. One prominent cluster is located in Staten Island (the large area on the left), while another small isolated polygon is found in the northeastern part of New York City. Staten Island's geographical isolation is natural and expected. Considering the unique characteristics of Staten Island, it will be included in the analysis along with the other parts of New York City to ensure a comprehensive understanding of immigrant population distribution across the entire area.
+
+### Global Moran's I for Immigrant Population
+```{r}
+# Include Staten Island and other areas
+# Filter all relevant subgraph groups (ensure none are excluded)
+relevant_clusters <- which(subgraph_groups %in% c(1, 2)) 
+nyc_data_main <- nyc_data[relevant_clusters, ]
+
+# Recalculate neighbors for the combined clusters
+nyc_data_main <- st_buffer(nyc_data_main, dist = 0.001)
+nb_main <- poly2nb(nyc_data_main, queen = TRUE, snap = 1)
+weights_main <- nb2listw(nb_main, style = "W", zero.policy = TRUE)
+
+# Calculate Moran's I
+moran_test <- moran.test(nyc_data_main$estimate, weights_main, zero.policy = TRUE)
+print(moran_test)
+```
+
+The positive Moran's I statistic (0.39) and the extremely low p-value suggest that the immigrant population density in NYC exhibits statistically significant spatial clustering. This means that areas with higher immigrant population densities are geographically close to one another, rather than being randomly distributed or dispersed.
+
+
+### Local Moran's I for Immigrant Population
+```{r}
+# Calculate Local Moran's I
+library(spdep)
+local_moran <- localmoran(nyc_data_main$estimate, weights_main)
+
+# Add Local Moran's I values and significance to the data
+nyc_data_main$local_I <- local_moran[, 1]  # Moran's I value
+nyc_data_main$p_value <- local_moran[, 5]  # p-value
+
+# Define cluster categories
+nyc_data_main$cluster <- NA
+nyc_data_main$cluster[nyc_data_main$local_I > 0 & nyc_data_main$p_value <= 0.05] <- "High-High"
+nyc_data_main$cluster[nyc_data_main$local_I < 0 & nyc_data_main$p_value <= 0.05] <- "Low-Low"
+nyc_data_main$cluster[nyc_data_main$local_I > 0 & nyc_data_main$p_value > 0.05] <- "High-Low"
+nyc_data_main$cluster[nyc_data_main$local_I < 0 & nyc_data_main$p_value > 0.05] <- "Low-High"
+nyc_data_main$cluster[is.na(nyc_data_main$cluster)] <- "Not Significant"
+
+# Convert cluster to factor for better visualization
+nyc_data_main$cluster <- factor(nyc_data_main$cluster,
+                                levels = c("High-High", "Low-Low", "High-Low", "Low-High", "Not Significant"))
+
+library(leaflet)
+
+# Define color palette with exact mapping
+pal <- colorFactor(
+  palette = c("firebrick", "lightblue", "white", "gray", "gray95"),
+  levels = c("High-High", "Low-Low", "High-Low", "Low-High", "Not Significant") 
+)
+
+# Create Leaflet map with consistent legend and fill colors
+leaflet(nyc_data_main) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%  
+  addPolygons(
+    fillColor = ~pal(cluster),                      
+    color = "black",                               
+    weight = 1,                                     
+    fillOpacity = 0.7,                              
+    popup = ~paste0(
+      "<b>Cluster Type:</b> ", cluster, "<br>",
+      "<b>Local Moran's I:</b> ", round(local_I, 3), "<br>",
+      "<b>p-value:</b> ", p_value
+    )                                              
+  ) %>%
+  addLegend(
+    "bottomright",                                  
+    pal = pal,
+    values = ~cluster,
+    title = "Local Moran's I Clusters",
+    opacity = 0.7
+  )
+
+
+
+
+```
+
+
+- Red Areas indicate that high immigrant populations are spatially concentrated and surrounded by similarly high values. High-High clusters are evident in Queens and southeastern NYC, suggesting these regions are strong immigrant hubs. However, based on the plot, there are no strongly dominant clusters for immigrant populations across NYC.
+
+- Overall, the significant Global Moran's I suggests that, on average, immigrant population values exhibit some clustering across NYC. But the Local Moran's I indicates that these clusters are not strong or widespread, with clustering patterns being scattered and spatially heterogeneous. NYC is highly diverse, and different boroughs or neighborhoods may have varying immigrant distributions. Global Moran's I smooths out this variation into a single summary statistic, while Local Moran's I highlights the localized nuances.
+
+
+## Assess the veracity of the hypothesis
+
+The clustering observed in Moran's I indicates that immigrant populations exhibit spatial dependence. This gives a clue that there might be interactions or patterns worth investigating with public service locations (e.g., schools or bus stops).
+
+Since Moran's I identified clustering, we can focus the intensity and pairwise analyses on areas with high immigrant densities to check for mismatches in public service access.
+
+### KDE
+
+```{r}
+
+# Reproject data to a projected CRS (NAD83 / New York Long Island, EPSG:2263)
+nyc_data_projected <- st_transform(nyc_data, crs = 2263)
+school_points_projected <- st_transform(school_points, crs = 2263)
+bus_stops_projected <- st_transform(bus_stops, crs = 2263)
+
+# Convert to spatstat point patterns
+schools_ppp <- as.ppp(st_coordinates(school_points_projected), W = as.owin(nyc_data_projected))
+bus_stops_ppp <- as.ppp(st_coordinates(bus_stops_projected), W = as.owin(nyc_data_projected))
+
 ```
 
 ```{r}
-merged_sub_sf |> ggplot(aes(x=scaled_dist, y=total_score, label=NAME_ENGLI)) +
-  geom_point() +
-  geom_smooth(method='lm', formula= y~x) +
-  geom_text(size=4, nudge_y = 0.075) +
-  theme_classic()
+school_points_projected <- school_points_projected[!duplicated(st_coordinates(school_points_projected)), ]
+schools_ppp <- as.ppp(st_coordinates(school_points_projected), W = as.owin(nyc_data_projected))
+
+schools_ppp$intensity <- schools_ppp$intensity * 1e6
+bus_stops_ppp$intensity <- bus_stops_ppp$intensity * 1e6
+
 ```
 
-## Discussion
+
+
+```{r}
+library(spatstat.explore)
+library(viridis)
+
+# Compute kernel density for schools
+schools_kde <- density(schools_ppp, sigma = bw.diggle(schools_ppp))
+
+# Compute kernel density for bus stops
+bus_stops_kde <- density(bus_stops_ppp, sigma = bw.diggle(bus_stops_ppp))
+
+# Visualize the intensity for schools
+plot(schools_kde, main = "Kernel Density Estimate: Schools Intensity")
+contour(schools_kde, add = TRUE)  # Add contours for clarity
+      
+
+
+```
+
+```{r}
+# Visualize the kernel density estimate (KDE) for bus stops
+# Calculate the range of intensity values, excluding NA values
+valid_range <- range(bus_stops_kde$v, na.rm = TRUE) 
+
+plot(bus_stops_kde,
+     main = "Kernel Density Estimate: Bus Stops Intensity",
+     col = plasma(156),           
+     zlim = valid_range,         
+     xlab = "Longitude",         
+     ylab = "Latitude",          
+     las = 1,                    
+     cex.axis = 0.8,             
+     cex.main = 1.2)            
+
+# Add more detailed contours
+contour(bus_stops_kde,
+        add = TRUE,              
+        col = "white",           
+        lwd = 0.8,               
+        nlevels = 15)    
+
+
+```  
+
+
+```{r}
+# Reproject data to a projected CRS
+nyc_data_projected <- st_transform(nyc_data, crs = 2263)
+
+# Calculate area (in square meters) and immigrant density
+nyc_data_projected$area <- st_area(nyc_data_projected)
+nyc_data_projected$immigrant_density <- nyc_data_projected$estimate / nyc_data_projected$area
+
+# Compute centroids
+immigrant_coords <- st_centroid(nyc_data_projected)
+
+# Create a coordinate matrix
+coords_matrix <- st_coordinates(immigrant_coords)
+
+# Check and filter points inside the boundary
+inside_window <- inside.owin(x = coords_matrix[, 1], y = coords_matrix[, 2], w = as.owin(nyc_data_projected))
+if (!all(inside_window)) {
+  warning(sum(!inside_window), " points were outside the window and will be removed.")
+}
+
+# Filter data to include only points inside the boundary
+nyc_data_projected <- nyc_data_projected[inside_window, ]
+coords_matrix <- coords_matrix[inside_window, ]
+
+# Create a planar point pattern (ppp) object
+immigrant_ppp <- as.ppp(coords_matrix, W = as.owin(nyc_data_projected))
+
+# Calculate Kernel Density Estimate (KDE) with weights
+immigrant_kde <- density(
+  immigrant_ppp,
+  weights = nyc_data_projected$immigrant_density,
+  sigma = bw.diggle(immigrant_ppp))
+
+
+# Visualize the KDE
+plot(immigrant_kde, main = "Kernel Density Estimate: Immigrant Density")
+contour(immigrant_kde, add = TRUE)
+
+
+
+```
+
+
+```{r}
+# Improved KDE Overlay Plot
+par(mfrow = c(1, 1))  
+
+# Plot Immigrant Density KDE (Base Layer)
+plot(immigrant_kde, main = "Overlay of KDE: Immigrant Density, Schools, and Bus Stops",
+     col = hcl.colors(100, "YlOrRd", alpha = 0.7), 
+     legend = TRUE)  # Semi-transparent base map
+
+# Add School KDE (Contours)
+contour(schools_kde, add = TRUE, col = "blue", lwd = 2, lty = 1)  
+
+# Add Bus Stop KDE (Contours)
+contour(bus_stops_kde, add = TRUE, col = "lightgreen", lwd = 1, lty = 2)  
+
+# Enhanced Legend
+legend("topright", legend = c("Schools", "Bus Stops"), 
+       col = c("blue", "lightgreen"), lty = c(1, 2), lwd = 2, 
+       bty = "n", title = "Contours")
+
+
+```
+
+Areas of high immigrant density are represented by lighter colors (yellow and orange) in the KDE plot. These areas are concentrated in specific boroughs like Queens and parts of Brooklyn, which are known for their large immigrant populations. In Queens, regions with high immigrant density show strong overlaps with schools (blue contours) and bus stops (green contours). This suggests these areas have relatively good access to public services. In contrast, southern Brooklyn, while having some high immigrant density areas, shows fewer overlaps with schools and bus stops, indicating potential gaps in accessibility in those regions. In Manhattan, high concentrations of public services (schools and bus stops) align more with commercial and residential density rather than immigrant density. Immigrant-dense neighborhoods in Upper Manhattan show moderate overlap, reflecting mixed accessibility.
+
+### Pairwise Correlation
+
+-   To further validate these findings, we can perform quantitative spatial analysis (e.g., pairwise correlation functions) to confirm the spatial relationships between immigrant density and public services and also explore whether there are significant differences in accessibility across specific immigrant-dense neighborhoods.
+
+- We chose pairwise correlation using Ripley’s K-function to analyze the spatial relationship between public services and immigrant density. Ripley’s K-function is ideal for assessing clustering or dispersion at multiple spatial scales and allows us to test whether public services are spatially aligned with immigrant-dense areas. Its ability to incorporate weights, like immigrant density, makes it a robust tool for evaluating service accessibility.
+
+
+#### Immigrants' Accessibility to Schools
+
+```{r}
+# Ensure nyc_data_projected is correctly projected and contains valid geometry
+nyc_data_projected <- st_transform(nyc_data, crs = 2263)
+school_points_projected <- st_transform(school_points, crs = 2263)
+
+# Define the observation window (W) using the bounding polygon of nyc_data_projected
+W <- as.owin(st_bbox(nyc_data_projected))  # Convert bounding box to owin
+
+# Recalculate centroids for immigrant data
+immigrant_coords_projected <- st_centroid(nyc_data_projected)
+
+# Extract coordinates for immigrants and schools
+immigrant_coords <- st_coordinates(immigrant_coords_projected)
+school_coords <- st_coordinates(school_points_projected)
+
+# Combine coordinates and create marks
+combined_coords <- rbind(immigrant_coords, school_coords)
+marks <- factor(c(rep("immigrant", nrow(immigrant_coords)),
+                  rep("school", nrow(school_coords))))
+
+# Filter out points lying outside the window
+inside_window <- inside.owin(x = combined_coords[, 1], 
+                             y = combined_coords[, 2], 
+                             w = W)
+
+filtered_coords <- combined_coords[inside_window, ]
+filtered_marks <- marks[inside_window]
+
+# Create the multitype point pattern and plot Ripley's K-function
+try({
+  multitype_ppp <- as.ppp(filtered_coords, W = W)
+  marks(multitype_ppp) <- filtered_marks
+  k_cross <- Kcross(multitype_ppp, i = "immigrant", j = "school")
+  plot(k_cross, main = "Ripley's K-Function: Immigrants vs Schools")}, 
+  silent = FALSE)
+
+
+```
+
+
+- The black line starts being close to the blue dashed line at small r values, suggesting some initial dispersion or fewer schools near immigrant population centers in very small radii. 
+
+- As r increases, the black line deviates and then rises above the Poisson line, indicating that schools may become more clustered around immigrant population centers over larger distances.
+
+- Conclusion: Schools tend to cluster around immigrant population centers at broader spatial scales. However, there might be a slight dispersion or lack of schools in very close proximity to immigrant population centers. This could suggest that schools are not immediately located near densely populated immigrant areas, potentially highlighting gaps in immediate spatial accessibility for these communities.
+
+```{r}
+# Number of simulations
+nsim <- 999
+
+# Run 999 Monte Carlo simulations with Ripley's K-function
+try({
+  simulated_k <- envelope(
+    multitype_ppp,
+    fun = Kcross,
+    nsim = nsim,
+    i = "immigrant",
+    j = "school",
+    global = TRUE,  
+    savefuns = TRUE,  
+    savepatterns = TRUE  
+  )
+
+  # Plot observed versus simulated K-function envelopes
+  plot(
+    simulated_k,
+    main = "Monte Carlo Envelope of Ripley's K-Function (Immigrants vs Schools)",
+    legendargs = list(
+      x = "topright",
+      legend = c("Observed", "Simulated Envelope"),
+      lty = c(1, 2),
+      col = c("black", "gray")
+    )
+  )
+}, silent = FALSE)
+
+
+```
+
+
+- Null Hypothesis: The spatial distribution of schools is independent of the spatial distribution of immigrant populations. Any observed clustering or dispersion between immigrant populations and schools is due to random spatial processes.
+
+- For smaller radii (r<10,000), the black line is near or slightly above the envelope, suggesting a weak clustering of schools near immigrant population centers at smaller spatial scales. As r increases (10,000≤r≤30,000), the black line clearly rises above the simulated envelope, indicating strong clustering of schools around immigrant population centers over broader spatial scales.
+
+- The result supports the hypothesis that schools are clustered around immigrant population centers, particularly at medium to larger spatial scales. However, the lack of immediate clustering at very small radii may suggest that immigrants in certain tracts may face reduced access to schools in close proximity. 
+
+- These findings could indicate that while schools are available within the broader community, they may not be optimally distributed to serve immigrant populations locally.
+
+#### Immigrants' Accessibility to Bus Stops 
+
+```{r}
+# Ensure nyc_data_projected and bus_stops are correctly projected and contain valid geometry
+nyc_data_projected <- st_transform(nyc_data, crs = 2263)
+bus_stops_projected <- st_transform(bus_stops, crs = 2263)
+
+# Define the observation window (W) using the bounding polygon of nyc_data_projected
+W <- as.owin(st_bbox(nyc_data_projected))  # Convert bounding box to owin
+
+# Recalculate centroids for immigrant data
+immigrant_coords_projected <- st_centroid(nyc_data_projected)
+
+# Extract coordinates for immigrants and bus stops
+immigrant_coords <- st_coordinates(immigrant_coords_projected)
+bus_stop_coords <- st_coordinates(bus_stops_projected)
+
+# Combine coordinates and create marks
+combined_coords <- rbind(immigrant_coords, bus_stop_coords)
+marks <- factor(c(rep("immigrant", nrow(immigrant_coords)),
+                  rep("bus_stop", nrow(bus_stop_coords))))
+
+# Filter out points lying outside the window
+inside_window <- inside.owin(x = combined_coords[, 1], 
+                             y = combined_coords[, 2], 
+                             w = W)
+
+filtered_coords <- combined_coords[inside_window, ]
+filtered_marks <- marks[inside_window]
+
+# Create the multitype point pattern and plot Ripley's K-function
+try({
+  multitype_ppp <- as.ppp(filtered_coords, W = W)
+  marks(multitype_ppp) <- filtered_marks
+  
+  # Calculate Ripley's K-function for immigrants and bus stops
+  k_cross <- Kcross(multitype_ppp, i = "immigrant", j = "bus_stop")
+  
+  # Plot the result
+  plot(k_cross, main = "Ripley's K-Function: Immigrants vs Bus Stops")
+}, silent = FALSE)
+
+
+```
+
+- Null Hypothesis: The spatial distribution of bus stops is independent of the spatial distribution of immigrant populations. Any observed clustering or dispersion between immigrant populations and bus stops is due to random spatial processes.
+
+- For smaller radii (r<10,000): The black line (is close to or slightly above the blue line, suggesting weak clustering of bus stops near immigrant population centers at smaller spatial scales.
+
+- For larger radii (r>20,000): The black line continues to rise substantially above the blue line, indicating strong clustering of bus stops relative to immigrant population centers at larger spatial scales.
+
+- To conclude, The weaker clustering observed at smaller radii (r<10,000) may suggest that bus stops are not immediately accessible in close proximity for certain immigrant populations, potentially reflecting a gap in transit infrastructure for some communities. At larger spatial scales, the observed clustering could indicate that immigrant populations are well-served by the transit network as a whole, even if some local gaps remain.
+
+
+
+```{r}
+# Number of simulations
+nsim <- 999
+
+# Run 99 Monte Carlo simulations with Ripley's K-function
+try({
+  # Perform envelope analysis for immigrants and bus stops
+  simulated_k_bus <- e
+  nvelope(
+    multitype_ppp,           # Point pattern dataset
+    fun = Kcross,            # Cross-type Ripley's K-function
+    nsim = nsim,             # Number of simulations
+    i = "immigrant",         # Type for the first point pattern
+    j = "bus_stop",          # Type for the second point pattern
+    global = TRUE,           # Calculate a global envelope for better statistical inference
+    savefuns = TRUE,         # Save all simulated K-functions for detailed analysis
+    savepatterns = TRUE      # Save simulated point patterns for additional insights
+  )
+
+  # Plot observed versus simulated K-function envelopes
+plot(
+    simulated_k_bus,
+    main = "Monte Carlo Envelope of Ripley's K-Function (Immigrants vs Bus Stops)",
+    legendargs = list(
+      x = "topright",
+      legend = c("Observed", "Simulated Envelope"),
+      lty = c(1, 2),
+      col = c("black", "gray")
+    )
+  )
+}, silent = FALSE)
+
+```
+
+
+- While bus stops are broadly clustered around immigrant populations, the lack of strong clustering at small spatial scales may indicate limited local accessibility in immigrant neighborhoods.
+
 
 ## Conclusion
 
-Our evidence indicates that the spatial dynamics of **conflict** differ from the spatial dynamics of **misgovernance**. Whereas 
+- Both schools and bus stops demonstrate clustering patterns around immigrant population centers at medium and large spatial scales, suggesting that public services are broadly aligned with immigrant communities.
+
+- However, weaker clustering at smaller scales highlights potential barriers to immediate accessibility for some immigrant-heavy census tracts.
+
+- While the hypothesis correctly identifies challenges in localized access to public services for immigrant-heavy census tracts, the broader clustering patterns suggest that immigrants are not uniformly disadvantaged in terms of accessibility. Instead, the findings highlight localized gaps in service density, particularly for transit, rather than systemic exclusion across all scales.
+
+
+## Future Exploration 
+
+- **Community-Specific Analysis:** Disaggregate immigrant populations by country of origin or language spoken to understand how accessibility challenges may vary between different immigrant communities.
+
+- **Spatial Accessibility Measures:** Use GIS tools to calculate travel times from immigrant-dense areas to the nearest schools and bus stops, providing a more granular measure of accessibility than clustering patterns alone. Also incorporate road network data to examine how connectivity impacts accessibility to schools and transit for immigrant populations.
+
+- **Incorporate Additional Data Sources:** Include variables such as income levels, car ownership rates, or household sizes to analyze how these factors intersect with immigrant populations and accessibility challenges.
