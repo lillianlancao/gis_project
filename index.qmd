@@ -10,7 +10,6 @@ execute:
   warning: false
   message: false
 df-print: kable
-bibliography: GIS_Manuscript.bib
 title-block-banner: "#E69F0095"
 title-block-banner-color: "black"
 format:
@@ -259,7 +258,6 @@ schools_ppp$intensity <- schools_ppp$intensity * 1e6
 bus_stops_ppp$intensity <- bus_stops_ppp$intensity * 1e6
 
 ```
-
 
 
 ```{r}
